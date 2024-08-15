@@ -1,34 +1,49 @@
 #!/usr/bin/env python3
+""" function that uses the requests module to obtain the
+HTML content of a particular URL and returns it.
 """
-Implements an expiring web cache and tracker
-"""
-from typing import Callable
-from functools import wraps
+
 import redis
 import requests
-redis_client = redis.Redis()
+from typing import Callable
+from functools import wraps
+
+# Initialize Redis client
+r = redis.Redis()
 
 
-def url_count(method: Callable) -> Callable:
-    """counts how many times an url is accessed"""
+def track_access_count(method: Callable) -> Callable:
+    """Decorator to track the number of times a URL is accessed."""
     @wraps(method)
-    def wrapper(*args, **kwargs):
-        url = args[0]
-        redis_client.incr(f"count:{url}")
-        cached = redis_client.get(f'{url}')
-        if cached:
-            return cached.decode('utf-8')
-        redis_client.setex(f'{url}, 10, {method(url)}')
-        return method(*args, **kwargs)
+    def wrapper(url: str, *args, **kwargs):
+        count_key = f"count:{url}"
+        r.incr(count_key)
+        return method(url, *args, **kwargs)
     return wrapper
 
 
-@url_count
+def cache_result(method: Callable) -> Callable:
+    """Decorator to cache the result of a URL fetch for 10 seconds."""
+    @wraps(method)
+    def wrapper(url: str, *args, **kwargs):
+        cache_key = f"cache:{url}"
+        cached_result = r.get(cache_key)
+        if cached_result:
+            return cached_result.decode('utf-8')
+
+        result = method(url, *args, **kwargs)
+        r.setex(cache_key, 10, result)
+        return result
+    return wrapper
+
+
+@track_access_count
+@cache_result
 def get_page(url: str) -> str:
-    """get a page and cache value"""
+    """Fetch the HTML content of a particular URL."""
     response = requests.get(url)
     return response.text
 
 
 if __name__ == "__main__":
-    get_page('http://slowwly.robertomurray.co.uk')
+    print(get_page('http://slowwly.robertomurray.co.uk'))
